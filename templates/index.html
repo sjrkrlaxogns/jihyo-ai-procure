@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>지효초 품의서 생성기</title>
+    <style>
+        body { font-family: 'Malgun Gothic', sans-serif; background-color: #f7fafc; color: #2d3748; margin: 0; padding: 20px; }
+        .container { max-width: 850px; margin: 0 auto; background: #fff; padding: 40px; border-radius: 12px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
+        header { text-align: center; border-bottom: 2px solid #edf2f7; padding-bottom: 20px; margin-bottom: 30px; }
+        h1 { color: #2b6cb0; margin-bottom: 5px; font-weight: 800; }
+        .subtitle { font-size: 10pt; color: #4a5568; font-weight: bold; }
+        .section-box { background: #f8fafc; border: 1px solid #e2e8f0; padding: 25px; border-radius: 8px; margin-bottom: 25px; }
+        .btn { padding: 10px 18px; border-radius: 6px; border: none; font-weight: 600; cursor: pointer; margin-right: 5px; margin-bottom: 5px; }
+        .btn-outline { background: white; border: 1px solid #cbd5e0; color: #4a5568; }
+        .btn-outline:hover { background: #edf2f7; }
+        .btn-success { background: #38a169; color: white; width: 100%; font-size: 1.2em; padding: 15px; margin-top: 10px; }
+        #file-preview { margin-top: 10px; background: #ebf8ff; color: #2b6cb0; padding: 12px; border-radius: 6px; display: none; }
+        #loading { display: none; text-align: center; padding: 30px; font-weight: bold; color: #3182ce; }
+        #result-section { display: none; background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 30px; margin-top: 30px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; text-align: center; font-size: 10pt; }
+        th, td { border: 1px solid #a0aec0; padding: 8px; }
+        th { background: #f7fafc; }
+        .text-left { text-align: left; padding-left: 10px; }
+        [contenteditable="true"] { background-color: #fbfcff; border: 1px dashed #cbd5e0; outline: none; padding: 5px; }
+        [contenteditable="true"]:focus { background-color: #fff; border: 1px solid #3182ce; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>지효초 품의서 생성기</h1>
+        <p class="subtitle">지효초등학교 과학정보부장 김태훈</p>
+    </header>
+
+    <div class="section-box" style="background: white;">
+        <h3 style="margin-top: 0;">정보 입력</h3>
+        <label>품의 제목</label>
+        <input type="text" id="docTitle" placeholder="예: 지효초 도서 구매" style="width: 100%; padding: 10px; margin-bottom: 20px;">
+
+        <label>파일 업로드 (만능 AI 파서: 엑셀, 이미지, PDF 모두 지원)</label>
+        
+        <div>
+            <input type="file" id="fileUpload" accept=".xlsx, .xls, .csv, image/png, image/jpeg, image/jpg, .pdf" style="display:none;" onchange="handleFileUpload(this)">
+            <button class="btn btn-outline" onclick="document.getElementById('fileUpload').click()">📊 엑셀/견적서</button>
+            <button class="btn btn-outline" onclick="document.getElementById('fileUpload').click()">🖼️ 화면 캡쳐(사진)</button>
+            <button class="btn btn-outline" onclick="document.getElementById('fileUpload').click()">📑 PDF 견적서</button>
+        </div>
+        <div id="file-preview"></div>
+
+        <button class="btn btn-success" onclick="generateDoc()">AI 품의서 생성하기</button>
+    </div>
+
+    <div id="loading">AI가 첨부파일을 분석하여 표를 생성하고 있습니다... ⏳<br><span style="font-size:0.8em; color:#718096;">(사진이나 PDF는 글자를 읽어내느라 10~15초 정도 걸릴 수 있습니다)</span></div>
+
+    <div id="result-section">
+        <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #edf2f7; padding-bottom: 10px;">
+            <h3 style="margin: 0;">생성된 품의서</h3>
+            <button class="btn btn-outline" onclick="copyDocument()">📄 본문 복사 (에듀파인용)</button>
+        </div>
+        <div id="doc-content" style="padding-top: 20px;"></div>
+    </div>
+</div>
+
+<script>
+    let globalItems = [];
+    let uploadedFile = null;
+
+    function handleFileUpload(input) {
+        if(input.files && input.files[0]) {
+            uploadedFile = input.files[0];
+            document.getElementById('file-preview').style.display = 'block';
+            document.getElementById('file-preview').innerHTML = "✅ 첨부된 파일: <b>" + uploadedFile.name + "</b> <br>아래 [AI 품의서 생성하기] 버튼을 누르세요.";
+        }
+    }
+
+    async function generateDoc() {
+        if (!uploadedFile) {
+            alert('분석할 파일을 먼저 업로드해주세요!'); 
+            return;
+        }
+
+        const title = document.getElementById('docTitle').value || '도서 및 교구 구매';
+        
+        document.getElementById('loading').style.display = 'block';
+        document.getElementById('result-section').style.display = 'none';
+
+        const formData = new FormData();
+        formData.append('file', uploadedFile);
+
+        try {
+            const response = await fetch('/api/analyze', { method: 'POST', body: formData });
+            const data = await response.json();
+            
+            if (data.error) {
+                alert("오류가 발생했습니다: " + data.error);
+                document.getElementById('loading').style.display = 'none';
+                return;
+            }
+
+            globalItems = data;
+            renderTable(title);
+
+        } catch (error) {
+            alert("서버 통신 오류: 파이썬 터미널 창이 꺼져있는지 확인하세요.");
+            document.getElementById('loading').style.display = 'none';
+        }
+    }
+
+    function renderTable(title) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('result-section').style.display = 'block';
+
+        let totalAmount = globalItems.reduce((sum, item) => sum + (item.price * item.qty), 0);
+        let firstItemName = globalItems[0].name.length > 20 ? globalItems[0].name.substring(0,20) + "..." : globalItems[0].name;
+        
+        let docHtml = `
+            <div id="hwp-target" style="font-family:'Malgun Gothic'; line-height: 1.8;">
+                <p style="margin: 0;">1. 관련:</p>
+                <p style="margin: 0;">2. <b>${title}</b> 관련 물품을 구매하고자 합니다.</p>
+                <p style="margin: 0 0 0 20px;">가. 품목: [${firstItemName}] 외 ${globalItems.length > 1 ? globalItems.length - 1 : 0}종</p>
+                <p style="margin: 0 0 0 20px;">나. 금액: <b id="header-total">금${totalAmount.toLocaleString()}원</b></p>
+                <p style="margin: 0 0 0 20px;">다. 구입처: 온라인 쇼핑몰</p>
+                
+                <table id="item-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;">순번</th>
+                            <th>내용(상품명)</th>
+                            <th style="width: 60px;">단위</th>
+                            <th style="width: 70px;">수량</th>
+                            <th style="width: 100px;">단가(원)</th>
+                            <th style="width: 110px;">금액(원)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+
+        globalItems.forEach((item, index) => {
+            docHtml += `
+                <tr>
+                    <td>${index + 1}</td>
+                    <td class="text-left"><span class="name-cell" contenteditable="true" style="width: 100%; display:block;" oninput="recalc()">${item.name}</span></td>
+                    <td><span contenteditable="true" style="width: 40px; display:block;">개</span></td>
+                    <td><span class="qty-cell" contenteditable="true" style="width: 40px; display:block;" oninput="recalc()">${item.qty}</span></td>
+                    <td><span class="price-cell" contenteditable="true" style="width: 80px; display:block;" oninput="recalc()">${item.price}</span></td>
+                    <td class="total-cell" style="font-weight:bold;">${(item.price * item.qty).toLocaleString()}</td>
+                </tr>
+            `;
+        });
+
+        docHtml += `
+                    </tbody>
+                    <tfoot>
+                        <tr style="background:#f7fafc; font-weight:bold;">
+                            <td colspan="5">총계 (원)</td>
+                            <td id="grand-total">${totalAmount.toLocaleString()}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        `;
+        document.getElementById('doc-content').innerHTML = docHtml;
+    }
+
+    function recalc() {
+        let totalSum = 0;
+        document.querySelectorAll('#item-table tbody tr').forEach((row) => {
+            let qty = parseInt(row.querySelector('.qty-cell').innerText.replace(/[^0-9]/g, '')) || 0;
+            let price = parseInt(row.querySelector('.price-cell').innerText.replace(/[^0-9]/g, '')) || 0;
+            row.querySelector('.total-cell').innerText = (qty * price).toLocaleString();
+            totalSum += (qty * price);
+        });
+        document.getElementById('grand-total').innerText = totalSum.toLocaleString();
+        document.getElementById('header-total').innerText = "금" + totalSum.toLocaleString() + "원";
+    }
+
+    function copyDocument() {
+        const target = document.getElementById('hwp-target');
+        const range = document.createRange();
+        range.selectNode(target);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+        document.execCommand('copy');
+        window.getSelection().removeAllRanges();
+        alert('✅ 복사 완료! 에듀파인에 [Ctrl+V] 하세요.');
+    }
+</script>
+</body>
+</html>
