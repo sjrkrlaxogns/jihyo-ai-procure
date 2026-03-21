@@ -1,17 +1,17 @@
-import os  # 파일 맨 윗줄에 이 문장이 없다면 추가해 주세요!
-
-
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_file
 import google.generativeai as genai
 import os
 import json
+import pandas as pd
+import io
+import base64
 
 app = Flask(__name__)
 
-# 1. 제미나이 API 세팅 (부장님의 API 키를 꼭 넣어주세요!)
+# [보안] Render 환경 변수에서 키 가져오기
 API_KEY = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel('gemini-2.5-flash')
+model = genai.GenerativeModel('gemini-1.5-flash') # 속도를 위해 flash 사용
 
 @app.route('/')
 def home():
@@ -19,82 +19,66 @@ def home():
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze_file():
-    if 'file' not in request.files:
-        return jsonify({"error": "파일이 없습니다."}), 400
+    data = request.json
+    text_content = data.get('text', '')
+    image_data = data.get('image', None) # 붙여넣은 이미지(Base64)
     
-    file = request.files['file']
-    ext = file.filename.split('.')[-1].lower()
-    filepath = f"temp_upload.{ext}"
-    file.save(filepath)
+    # [부장님 요청사항 반영] 초정밀 검증형 프롬프트
+    prompt = """
+    [역할: 대한민국 학교 행정 전문가]
+    제시된 텍스트나 이미지에서 품의용 물품 목록을 추출하라.
     
+    [규칙]
+    1. 긴 제목은 하나로 합치고, '합계', '배송비' 등은 제외한다.
+    2. 결과는 반드시 아래 JSON 배열 형식으로만 답하라.
+    [{"name": "품명", "qty": 1, "price": 10000}]
+    """
+
     try:
-        # [부장님 지적사항 반영] 초정밀 검증형 프롬프트
-        prompt = """
-        [역할: 대한민국 학교 행정 전용 데이터 정제 전문가]
-        너는 이미지, PDF, 엑셀 자료를 분석하여 품의서용 도서 목록을 추출하는 전문가야. 
-        데이터 추출 시 아래 [필수 검증 규칙]을 100% 준수하여 오차를 없애라.
+        content_to_send = [prompt]
+        if text_content:
+            content_to_send.append(f"\n[분석할 텍스트]\n{text_content}")
+        
+        if image_data:
+            # Base64 이미지를 제미나이가 인식할 수 있는 형태로 변환
+            header, encoded = image_data.split(",", 1)
+            data = base64.b64decode(encoded)
+            content_to_send.append({'mime_type': 'image/png', 'data': data})
 
-        [필수 검증 규칙]
-        1. **긴 제목 줄바꿈 통합**: 
-           - 책 제목이 길어서 두 줄 이상으로 나뉘어 있는 경우, 이를 절대 별개의 품목으로 나누지 마라. 
-           - 문맥을 파악하여 하나의 도서명으로 반드시 합쳐서 한 줄로 표기하라.
-        
-        2. **합계 및 부가정보 제외 (금액 뻥튀기 방지)**: 
-           - '합계', '총액', '배송비', '할인액', '포인트' 등이 적힌 줄은 상품이 아니다. 절대 리스트에 넣지 마라.
-           - 리스트의 마지막에 나타나는 '총 결제 금액'을 상품으로 오인하여 추가하면 금액이 2배가 되니 주의하라.
-        
-        3. **중복 데이터 제거**: 
-           - 이미지 내에 상세 내역과 요약 내역이 동시에 존재할 경우, 상세 내역에서 딱 한 번만 추출하라.
-           - 동일한 금액이 반복 보인다면 중복 여부를 반드시 체크하라.
-
-        4. **상품명 정제**: 
-           - '무료배송', '특가', '정품', '쿠폰' 등의 수식어는 삭제하고 순수 도서명/물품명만 남겨라.
-
-        [응답 형식]
-        - 반드시 아래와 같은 '순수 JSON 배열' 형식으로만 응답하라. (설명 금지)
-        [
-          {"name": "정확한 도서명", "qty": 1, "price": 15000}
-        ]
-        """
-        
-        # 파일 형식에 따른 분석 실행
-        if ext in ['xls', 'xlsx', 'csv']:
-            try:
-                with open(filepath, 'r', encoding='utf-8') as f: file_text = f.read()
-            except:
-                with open(filepath, 'r', encoding='cp949') as f: file_text = f.read()
-            response = model.generate_content(prompt + f"\n\n[데이터 원본]\n{file_text}")
-        elif ext in ['jpg', 'jpeg', 'png', 'pdf']:
-            uploaded_to_gemini = genai.upload_file(filepath)
-            response = model.generate_content([prompt, uploaded_to_gemini])
-            genai.delete_file(uploaded_to_gemini.name)
-        else:
-            os.remove(filepath)
-            return jsonify({"error": "지원하지 않는 파일 형식입니다."}), 400
-        
-        # AI 응답 텍스트 정제
+        response = model.generate_content(content_to_send)
         clean_text = response.text.replace('```json', '').replace('```', '').strip()
         result_data = json.loads(clean_text)
         
-        # [이중 방어막] 파이썬 코드로 한 번 더 거르기 (합계 줄 강제 삭제)
-        final_list = []
-        forbidden_words = ['합계', '총액', '총금액', '배송비', '총계', '결제금액', '할인액']
+        # 중복 제거 및 정제
+        final_list = [item for item in result_data if not any(word in item['name'] for word in ['합계', '총액', '배송비'])]
         
-        for item in result_data:
-            # 이름에 금지어가 포함되어 있거나, 수량이 0이거나, 가격이 비정상적으로 크면 제외
-            if any(word in item['name'] for word in forbidden_words):
-                continue
-            if item['qty'] < 1:
-                continue
-            final_list.append(item)
-            
-        os.remove(filepath)
-        return jsonify(final_list) 
-        
+        return jsonify(final_list)
     except Exception as e:
-        if os.path.exists(filepath): os.remove(filepath)
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/download', methods=['POST'])
+def download_excel():
+    data = request.json
+    items = data.get('items', [])
+    
+    # 엑셀 데이터 구성
+    df = pd.DataFrame(items)
+    df.columns = ['내용', '수량', '예상단가']
+    df['단위'] = '개' # 기본값
+    df['예상금액'] = df['수량'] * df['예상단가']
+    df['규격'] = ''
+    
+    # 컬럼 순서 조정 (부장님 스크린샷 기준)
+    df = df[['내용', '규격', '단위', '수량', '예상단가', '예상금액']]
+    
+    # 엑셀을 메모리에 생성
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=True, index_label='순번', sheet_name='품의목록')
+    
+    output.seek(0)
+    return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 
+                     as_attachment=True, download_name='품의서_목록.xlsx')
+
 if __name__ == '__main__':
-    # 인터넷 배포를 위해 host를 0.0.0.0으로 설정합니다.
     app.run(host='0.0.0.0', port=5000)
