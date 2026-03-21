@@ -8,77 +8,70 @@ import base64
 
 app = Flask(__name__)
 
-# [보안] Render 환경 변수에서 키 가져오기
+# Render 환경 변수 사용
 API_KEY = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash') # 속도를 위해 flash 사용
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 @app.route('/')
 def home():
     return render_template('index.html')
 
 @app.route('/api/analyze', methods=['POST'])
-def analyze_file():
-    data = request.json
-    text_content = data.get('text', '')
-    image_data = data.get('image', None) # 붙여넣은 이미지(Base64)
-    
-    # [부장님 요청사항 반영] 초정밀 검증형 프롬프트
+def analyze():
+    # 1. 파일 업로드 처리 (기존 방식)
+    if 'file' in request.files:
+        file = request.files['file']
+        image_data = file.read()
+        mime_type = file.mimetype
+    # 2. 텍스트/붙여넣기 이미지 처리 (추가 방식)
+    else:
+        data = request.json
+        text_content = data.get('text', '')
+        pasted_image = data.get('image', None)
+        
+        if pasted_image:
+            header, encoded = pasted_image.split(",", 1)
+            image_data = base64.b64decode(encoded)
+            mime_type = "image/png"
+        else:
+            image_data = None
+
     prompt = """
-    [역할: 대한민국 학교 행정 전문가]
-    제시된 텍스트나 이미지에서 품의용 물품 목록을 추출하라.
-    
-    [규칙]
-    1. 긴 제목은 하나로 합치고, '합계', '배송비' 등은 제외한다.
-    2. 결과는 반드시 아래 JSON 배열 형식으로만 답하라.
-    [{"name": "품명", "qty": 1, "price": 10000}]
+    물품 목록을 추출하여 JSON 배열로 응답하라. 
+    형식: [{"name": "품명", "qty": 수량, "price": 단가}]
+    배송비나 합계는 제외한다.
     """
 
     try:
-        content_to_send = [prompt]
-        if text_content:
-            content_to_send.append(f"\n[분석할 텍스트]\n{text_content}")
-        
+        content = [prompt]
         if image_data:
-            # Base64 이미지를 제미나이가 인식할 수 있는 형태로 변환
-            header, encoded = image_data.split(",", 1)
-            data = base64.b64decode(encoded)
-            content_to_send.append({'mime_type': 'image/png', 'data': data})
-
-        response = model.generate_content(content_to_send)
+            content.append({'mime_type': mime_type, 'data': image_data})
+        if 'data' in locals() and data.get('text'):
+            content.append(f"\n텍스트: {data.get('text')}")
+            
+        response = model.generate_content(content)
         clean_text = response.text.replace('```json', '').replace('```', '').strip()
-        result_data = json.loads(clean_text)
-        
-        # 중복 제거 및 정제
-        final_list = [item for item in result_data if not any(word in item['name'] for word in ['합계', '총액', '배송비'])]
-        
-        return jsonify(final_list)
+        return jsonify(json.loads(clean_text))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/download', methods=['POST'])
-def download_excel():
+def download():
     data = request.json
     items = data.get('items', [])
-    
-    # 엑셀 데이터 구성
     df = pd.DataFrame(items)
     df.columns = ['내용', '수량', '예상단가']
-    df['단위'] = '개' # 기본값
+    df['단위'] = '개'
     df['예상금액'] = df['수량'] * df['예상단가']
     df['규격'] = ''
-    
-    # 컬럼 순서 조정 (부장님 스크린샷 기준)
     df = df[['내용', '규격', '단위', '수량', '예상단가', '예상금액']]
     
-    # 엑셀을 메모리에 생성
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=True, index_label='순번', sheet_name='품의목록')
-    
+        df.to_excel(writer, index=True, index_label='순번')
     output.seek(0)
-    return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 
-                     as_attachment=True, download_name='품의서_목록.xlsx')
+    return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name='품의목록.xlsx')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

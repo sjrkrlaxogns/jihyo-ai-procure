@@ -3,69 +3,101 @@
 <head>
     <title>지효초 품의서 생성기</title>
     <style>
-        body { font-family: sans-serif; padding: 20px; max-width: 800px; margin: auto; }
-        #drop-area { border: 2px dashed #ccc; padding: 20px; text-align: center; margin-bottom: 20px; }
-        textarea { width: 100%; height: 150px; margin-bottom: 20px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
-        .result-footer { margin-top: 10px; font-weight: bold; text-align: right; }
+        body { font-family: 'Malgun Gothic', sans-serif; padding: 20px; max-width: 900px; margin: auto; background: #f4f7f6; }
+        .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .section { margin-bottom: 20px; padding: 15px; border: 1px solid #eee; border-radius: 5px; }
+        textarea { width: 100%; height: 120px; margin-top: 10px; border: 1px solid #ccc; padding: 10px; box-sizing: border-box; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; background: white; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: center; }
+        th { background: #f8f9fa; }
+        .btn { padding: 12px 25px; border: none; border-radius: 5px; cursor: pointer; color: white; font-weight: bold; }
+        .btn-primary { background: #28a745; }
+        .btn-excel { background: #007bff; display: none; margin-top: 10px; }
+        .footer-end { text-align: right; margin-top: 15px; font-weight: bold; font-size: 1.1em; }
     </style>
 </head>
 <body>
-    <h2>지효초 AI 품의서 시스템</h2>
-    
-    <label>품의 제목:</label><br>
-    <input type="text" id="title" style="width:100%"><br><br>
+    <div class="container">
+        <h2>지효초 AI 품의서 시스템</h2>
+        
+        <div class="section">
+            <label><b>1. 품의 제목:</b></label><br>
+            <input type="text" id="title" style="width:100%; padding:8px; margin-top:5px;" placeholder="예: 1학년 3반 학급운영비 물품 구매">
+        </div>
 
-    <label>내용 (텍스트 복사/붙여넣기 또는 이미지 Ctrl+V):</label><br>
-    <textarea id="content-area" placeholder="내용을 입력하거나 스크린샷을 Ctrl+V로 붙여넣으세요."></textarea>
+        <div class="section">
+            <label><b>2. 파일 업로드 (기존 방식):</b></label><br>
+            <input type="file" id="fileInput" accept="image/*, .pdf">
+        </div>
 
-    <button onclick="analyze()" style="padding:10px 20px; background:#28a745; color:white; border:none; cursor:pointer;">AI 품의서 생성하기</button>
-    <button onclick="downloadExcel()" id="down-btn" style="display:none; padding:10px 20px; background:#007bff; color:white; border:none; cursor:pointer;">엑셀 다운로드</button>
+        <div class="section">
+            <label><b>3. 내용 입력 (복사 붙여넣기 및 이미지 Ctrl+V):</b></label>
+            <textarea id="content-area" placeholder="텍스트를 복사해 넣거나, 스크린샷을 찍은 후 여기서 Ctrl+V를 누르세요."></textarea>
+        </div>
 
-    <div id="result-table"></div>
+        <button onclick="process()" class="btn btn-primary">AI 품의서 생성하기</button>
+        <button onclick="downloadExcel()" id="down-btn" class="btn btn-excel">엑셀 파일로 다운로드</button>
+
+        <div id="result-area"></div>
+    </div>
 
     <script>
-        let lastResult = [];
-        let pastedImage = null;
+        let lastItems = [];
+        let pastedImageBase64 = null;
 
-        // 이미지 붙여넣기 감지 로직
-        document.getElementById('content-area').addEventListener('paste', function(e) {
+        // Ctrl+V 이미지 감지
+        document.getElementById('content-area').addEventListener('paste', (e) => {
             const items = e.clipboardData.items;
             for (let i = 0; i < items.length; i++) {
                 if (items[i].type.indexOf('image') !== -1) {
                     const blob = items[i].getAsFile();
                     const reader = new FileReader();
-                    reader.onload = function(event) {
-                        pastedImage = event.target.result;
-                        alert("이미지가 인식되었습니다!");
+                    reader.onload = (event) => {
+                        pastedImageBase64 = event.target.result;
+                        alert("이미지가 복사되었습니다!");
                     };
                     reader.readAsDataURL(blob);
                 }
             }
         });
 
-        async function analyze() {
-            const text = document.getElementById('content-area').value;
-            const res = await fetch('/api/analyze', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({text: text, image: pastedImage})
-            });
-            const data = await res.json();
-            lastResult = data;
-            
-            let html = '<table><tr><th>순번</th><th>내용</th><th>단위</th><th>수량</th><th>단가</th><th>금액</th></tr>';
+        async function process() {
+            const fileInput = document.getElementById('fileInput');
+            const textArea = document.getElementById('content-area');
+            let data;
+
+            // 파일이 있으면 파일 우선 처리
+            if (fileInput.files.length > 0) {
+                const formData = new FormData();
+                formData.append('file', fileInput.files[0]);
+                const res = await fetch('/api/analyze', { method: 'POST', body: formData });
+                data = await res.json();
+            } else {
+                // 파일 없으면 텍스트/붙여넣기 이미지 처리
+                const res = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ text: textArea.value, image: pastedImageBase64 })
+                });
+                data = await res.json();
+            }
+
+            lastItems = data;
+            display(data);
+        }
+
+        function display(items) {
+            let html = '<table><tr><th>순번</th><th>내용</th><th>규격</th><th>단위</th><th>수량</th><th>단가</th><th>금액</th></tr>';
             let total = 0;
-            data.forEach((item, i) => {
-                const priceSum = item.qty * item.price;
-                total += priceSum;
-                html += `<tr><td>${i+1}</td><td>${item.name}</td><td>개</td><td>${item.qty}</td><td>${item.price.toLocaleString()}</td><td>${priceSum.toLocaleString()}</td></tr>`;
+            items.forEach((item, i) => {
+                const sum = item.qty * item.price;
+                total += sum;
+                html += `<tr><td>${i+1}</td><td>${item.name}</td><td></td><td>개</td><td>${item.qty}</td><td>${item.price.toLocaleString()}</td><td>${sum.toLocaleString()}</td></tr>`;
             });
             html += '</table>';
-            html += `<div class="result-footer">총계: ${total.toLocaleString()}원  끝.</div>`;
+            html += `<div class="footer-end">총 합계: ${total.toLocaleString()}원  &nbsp;&nbsp;끝.</div>`;
             
-            document.getElementById('result-table').innerHTML = html;
+            document.getElementById('result-area').innerHTML = html;
             document.getElementById('down-btn').style.display = 'inline-block';
         }
 
@@ -73,13 +105,13 @@
             const res = await fetch('/api/download', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({items: lastResult})
+                body: JSON.stringify({ items: lastItems })
             });
             const blob = await res.blob();
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = '품의목록.xlsx';
+            a.download = '품의목록_지효초.xlsx';
             a.click();
         }
     </script>
