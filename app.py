@@ -1,3 +1,6 @@
+import os  # 파일 맨 윗줄에 이 문장이 없다면 추가해 주세요!
+
+
 from flask import Flask, render_template, request, jsonify
 import google.generativeai as genai
 import os
@@ -6,7 +9,7 @@ import json
 app = Flask(__name__)
 
 # 1. 제미나이 API 세팅 (부장님의 API 키를 꼭 넣어주세요!)
-API_KEY = "AIzaSyBGH5yhDDFQYcCTpscmMfHYksLdhsldLwQ"
+API_KEY = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel('gemini-2.5-flash')
 
@@ -93,4 +96,5 @@ def analyze_file():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    # 인터넷 배포를 위해 host를 0.0.0.0으로 설정합니다.
+    app.run(host='0.0.0.0', port=5000)
