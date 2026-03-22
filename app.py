@@ -9,7 +9,7 @@ import base64
 app = Flask(__name__)
 
 # ★여기에 발급받으신 진짜 API 키를 그대로 유지해주세요!★
-API_KEY = "GEMINI_API_KEY" 
+API_KEY = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=API_KEY)
 # 모델명을 안정적인 gemini-1.5-flash로 유지합니다.
 model = genai.GenerativeModel('gemini-2.5-flash')
